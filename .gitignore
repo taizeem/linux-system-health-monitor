@@ -1,0 +1,19 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime logs and SQLite databases
+logs/*.log
+data/*.db
+data/*.sqlite3
+
+# Temporary and OS-specific files
+*.tmp
+*.swp
+.DS_Store
