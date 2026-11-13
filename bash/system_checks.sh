@@ -14,52 +14,32 @@
 
 set -euo pipefail
 
-# Allow overriding paths via environment variables so automated tests can
-# inject mock directories without modifying production code.
-readonly PROC_DIR="${LHM_PROC_DIR:-/proc}"
-readonly PROJECT_ROOT="${LHM_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bash/common.sh
+source "${SCRIPT_DIR}/common.sh"
 
-# Exit code constants
-readonly EXIT_SUCCESS=0
-readonly EXIT_INVALID_ARGS=1
-readonly EXIT_PROC_ERROR=2
-readonly EXIT_MISSING_CMD=3
-readonly EXIT_DIR_ERROR=4
-
-log_info() {
-    printf "[INFO] %s\n" "$1"
-}
-
-log_error() {
-    printf "[ERROR] %s\n" "$1" >&2
-}
+setup_cleanup_trap
 
 usage() {
     printf "Usage: %s [--quiet]\n" "$(basename "$0")"
 }
 
-# Parse command-line arguments
-QUIET_MODE=false
-if [[ $# -gt 0 ]]; then
-    case "$1" in
-        --quiet|-q)
-            QUIET_MODE=true
-            ;;
-        --help|-h)
-            usage
-            exit "${EXIT_SUCCESS}"
-            ;;
-        *)
-            log_error "Unknown argument: $1"
-            usage >&2
-            exit "${EXIT_INVALID_ARGS}"
-            ;;
-    esac
-fi
-
-info_msg() {
-    if [[ "${QUIET_MODE}" == false ]]; then
-        log_info "$1"
+parse_args() {
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            --quiet|-q)
+                LHM_QUIET_MODE=true
+                ;;
+            --help|-h)
+                usage
+                exit "${EXIT_SUCCESS}"
+                ;;
+            *)
+                log_error "Unknown argument: $1"
+                usage >&2
+                exit "${EXIT_INVALID_ARGS}"
+                ;;
+        esac
     fi
 }
 
@@ -72,17 +52,17 @@ check_proc_files() {
         "net/dev"
     )
 
-    info_msg "Checking Linux /proc filesystem interfaces in ${PROC_DIR}..."
+    log_info "Checking Linux /proc filesystem interfaces in ${LHM_PROC_DIR}..."
 
-    if [[ ! -d "${PROC_DIR}" ]]; then
-        log_error "Proc directory does not exist: ${PROC_DIR}"
+    if [[ ! -d "${LHM_PROC_DIR}" ]]; then
+        log_error "Proc directory does not exist: ${LHM_PROC_DIR}"
         exit "${EXIT_PROC_ERROR}"
     fi
 
     local file_rel_path
     local full_path
     for file_rel_path in "${required_files[@]}"; do
-        full_path="${PROC_DIR}/${file_rel_path}"
+        full_path="${LHM_PROC_DIR}/${file_rel_path}"
         if [[ ! -e "${full_path}" ]]; then
             log_error "Required kernel interface file is missing: ${full_path}"
             exit "${EXIT_PROC_ERROR}"
@@ -93,11 +73,10 @@ check_proc_files() {
         fi
     done
 
-    info_msg "All required /proc virtual files are present and readable."
+    log_info "All required /proc virtual files are present and readable."
 }
 
 check_required_commands() {
-    # Allow overriding the required commands list in tests via LHM_REQUIRED_CMDS
     local default_cmds=("df" "ps" "ping" "awk" "grep" "python3")
     local cmds_to_check=()
 
@@ -107,7 +86,7 @@ check_required_commands() {
         cmds_to_check=("${default_cmds[@]}")
     fi
 
-    info_msg "Checking required system utilities..."
+    log_info "Checking required system utilities..."
 
     local cmd
     for cmd in "${cmds_to_check[@]}"; do
@@ -117,7 +96,7 @@ check_required_commands() {
         fi
     done
 
-    info_msg "All required system utilities are available."
+    log_info "All required system utilities are available."
 }
 
 check_runtime_directories() {
@@ -127,12 +106,12 @@ check_runtime_directories() {
         "config"
     )
 
-    info_msg "Checking project runtime directories in ${PROJECT_ROOT}..."
+    log_info "Checking project runtime directories in ${LHM_PROJECT_ROOT}..."
 
     local dir_name
     local full_dir_path
     for dir_name in "${required_dirs[@]}"; do
-        full_dir_path="${PROJECT_ROOT}/${dir_name}"
+        full_dir_path="${LHM_PROJECT_ROOT}/${dir_name}"
         if [[ ! -d "${full_dir_path}" ]]; then
             log_error "Required directory is missing: ${full_dir_path}"
             exit "${EXIT_DIR_ERROR}"
@@ -143,15 +122,24 @@ check_runtime_directories() {
         fi
     done
 
-    info_msg "All runtime directories exist and are writable."
+    # Verify temporary file creation and automatic cleanup via trap
+    local probe_tmp="${LHM_PROJECT_ROOT}/data/.check_write_probe.$$"
+    register_temp_file "${probe_tmp}"
+    if ! printf "ok\n" > "${probe_tmp}" 2>/dev/null; then
+        log_error "Failed to write probe file inside data directory: ${probe_tmp}"
+        exit "${EXIT_DIR_ERROR}"
+    fi
+
+    log_info "All runtime directories exist and are writable."
 }
 
 main() {
+    parse_args "$@"
     check_proc_files
     check_required_commands
     check_runtime_directories
-    info_msg "System environment verification passed."
+    log_info "System environment verification passed."
     exit "${EXIT_SUCCESS}"
 }
 
-main
+main "$@"

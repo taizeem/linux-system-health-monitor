@@ -1,3 +1,5 @@
+"""Unit tests for bash/common.sh and bash/system_checks.sh."""
+
 import os
 import stat
 import subprocess
@@ -7,13 +9,14 @@ from pathlib import Path
 
 
 class TestSystemChecksScript(unittest.TestCase):
-    """Verify bash/system_checks.sh behavior across normal and failure modes."""
+    """Verify bash/system_checks.sh and bash/common.sh behavior and edge cases."""
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Locate the repository root and target Bash script once per test run."""
+        """Locate the repository root and target Bash scripts once per test run."""
         cls.project_root = Path(__file__).resolve().parent.parent
         cls.script_path = cls.project_root / "bash" / "system_checks.sh"
+        cls.common_path = cls.project_root / "bash" / "common.sh"
 
     def setUp(self) -> None:
         """Create an isolated temporary environment for each individual test."""
@@ -31,6 +34,8 @@ class TestSystemChecksScript(unittest.TestCase):
         self.mock_root = self.temp_path / "project"
         for runtime_dir in ("logs", "data", "config"):
             (self.mock_root / runtime_dir).mkdir(parents=True, exist_ok=True)
+
+        self.mock_log_file = self.mock_root / "logs" / "monitor.log"
 
     def tearDown(self) -> None:
         """Restore permissions if modified during a test, then clean up."""
@@ -50,6 +55,7 @@ class TestSystemChecksScript(unittest.TestCase):
         env = os.environ.copy()
         env["LHM_PROC_DIR"] = str(self.mock_proc)
         env["LHM_PROJECT_ROOT"] = str(self.mock_root)
+        env["LHM_LOG_FILE"] = str(self.mock_log_file)
         if env_overrides:
             env.update(env_overrides)
 
@@ -62,15 +68,11 @@ class TestSystemChecksScript(unittest.TestCase):
         )
 
     def test_script_exists_and_is_executable(self) -> None:
-        """Ensure bash/system_checks.sh exists and has the user execute bit set."""
-        self.assertTrue(
-            self.script_path.is_file(),
-            f"Script not found at {self.script_path}",
-        )
-        self.assertTrue(
-            os.access(self.script_path, os.X_OK),
-            f"Script {self.script_path} is not executable (run chmod +x)",
-        )
+        """Ensure system_checks.sh and common.sh exist and are executable."""
+        self.assertTrue(self.script_path.is_file())
+        self.assertTrue(os.access(self.script_path, os.X_OK))
+        self.assertTrue(self.common_path.is_file())
+        self.assertTrue(os.access(self.common_path, os.X_OK))
 
     def test_passing_environment_returns_zero(self) -> None:
         """Verify exit code 0 when all /proc files, commands, and dirs are valid."""
@@ -78,11 +80,49 @@ class TestSystemChecksScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0, f"Unexpected stderr: {result.stderr}")
         self.assertIn("System environment verification passed.", result.stdout)
 
-    def test_quiet_flag_suppresses_stdout(self) -> None:
-        """Verify --quiet suppresses informational output while returning 0."""
+    def test_log_file_is_written_with_utc_timestamps(self) -> None:
+        """Verify common.sh appends structured [INFO] entries to monitor.log."""
+        result = self._run_script()
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(self.mock_log_file.is_file(), "Expected monitor.log to be created")
+        log_contents = self.mock_log_file.read_text(encoding="utf-8")
+        self.assertIn("[INFO] System environment verification passed.", log_contents)
+        self.assertIn("T", log_contents)
+        self.assertIn("Z [INFO]", log_contents)
+
+    def test_probe_temp_file_is_cleaned_up_on_exit(self) -> None:
+        """Verify the EXIT trap deletes the temporary write-probe file in data/."""
+        result = self._run_script()
+        self.assertEqual(result.returncode, 0)
+        leftover_files = list((self.mock_root / "data").glob(".check_write_probe.*"))
+        self.assertEqual(leftover_files, [], "Temporary probe file was not cleaned up by trap")
+
+    def test_trap_cleans_up_registered_temp_file_on_failure(self) -> None:
+        """Verify cleanup_on_exit removes registered temp files even on non-zero exit."""
+        leaky_file = self.temp_path / "should_be_deleted.tmp"
+        bash_snippet = (
+            f'source "{self.common_path}"; '
+            f'setup_cleanup_trap; '
+            f'touch "{leaky_file}"; '
+            f'register_temp_file "{leaky_file}"; '
+            f'exit 2'
+        )
+        res = subprocess.run(
+            ["bash", "-c", bash_snippet],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(res.returncode, 2)
+        self.assertFalse(leaky_file.exists(), "Trap failed to remove temp file on error exit")
+
+    def test_quiet_flag_suppresses_stdout_but_still_logs_to_file(self) -> None:
+        """Verify --quiet suppresses terminal stdout while still recording to monitor.log."""
         result = self._run_script(args=["--quiet"])
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "")
+        self.assertTrue(self.mock_log_file.is_file())
+        self.assertIn("System environment verification passed.", self.mock_log_file.read_text())
 
     def test_invalid_argument_returns_exit_code_1(self) -> None:
         """Verify unknown CLI flags are rejected with exit code 1 and stderr message."""
