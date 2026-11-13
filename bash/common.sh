@@ -22,6 +22,12 @@ readonly EXIT_INVALID_ARGS=1
 readonly EXIT_PROC_ERROR=2
 readonly EXIT_MISSING_CMD=3
 readonly EXIT_DIR_ERROR=4
+readonly EXIT_SUCCESS=0
+readonly EXIT_INVALID_ARGS=1
+readonly EXIT_PROC_ERROR=2
+readonly EXIT_MISSING_CMD=3
+readonly EXIT_DIR_ERROR=4
+readonly EXIT_PARSE_ERROR=5
 
 # Global state for quiet output and tracked temporary files
 LHM_QUIET_MODE="${LHM_QUIET_MODE:-false}"
