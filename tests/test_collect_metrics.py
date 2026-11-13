@@ -155,6 +155,7 @@ class TestCollectMetricsScript(unittest.TestCase):
         """Verify unknown CLI flags return exit code 1."""
         result = self._run_collector(args=["--unknown"])
         self.assertEqual(result.returncode, 1)
+        self.assertIn("[ERROR] Unknown argument: --unknown", result.stderr)
 
 
 if __name__ == "__main__":
