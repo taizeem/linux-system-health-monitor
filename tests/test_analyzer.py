@@ -10,16 +10,18 @@ if str(PROJECT_ROOT) not in sys.path:
 from python.analyzer import (  # noqa: E402
     AnalyzerError,
     analyze_metrics,
+    bytes_to_megabytes,
     calculate_cpu_usage_percent,
     calculate_disk_usage_percent,
     calculate_ram_usage_percent,
     calculate_swap_usage_percent,
+    evaluate_network_status,
 )
 from python.collector import CpuSample, RawSystemMetrics  # noqa: E402
 
 
 class TestAnalyzerModule(unittest.TestCase):
-    """Verify CPU, RAM, Swap, and Disk utilization formulas and edge cases."""
+    """Verify CPU, RAM, Swap, Disk, Process, and Network analysis and edge cases."""
 
     def setUp(self) -> None:
         """Create a baseline valid RawSystemMetrics fixture for testing."""
@@ -46,13 +48,13 @@ class TestAnalyzerModule(unittest.TestCase):
             disk_used_kb=3400000,     # 68% used
             disk_available_kb=1600000,
             running_processes=124,
-            net_rx_bytes=102400,
-            net_tx_bytes=51200,
+            net_rx_bytes=10485760,    # 10.0 MiB
+            net_tx_bytes=5242880,     # 5.0 MiB
             network_status="Connected",
         )
 
     def test_analyze_metrics_computes_expected_percentages(self) -> None:
-        """Verify end-to-end analyze_metrics produces exact expected percentages."""
+        """Verify end-to-end analyze_metrics produces exact expected percentages and network MiB."""
         result = analyze_metrics(self.raw)
         self.assertEqual(result.cpu_usage_percent, 45.0)
         self.assertEqual(result.ram_usage_percent, 72.0)
@@ -61,7 +63,31 @@ class TestAnalyzerModule(unittest.TestCase):
         self.assertEqual(result.mem_used_kb, 720000)
         self.assertEqual(result.swap_used_kb, 120000)
         self.assertEqual(result.running_processes, 124)
+        self.assertEqual(result.net_rx_mb, 10.0)
+        self.assertEqual(result.net_tx_mb, 5.0)
         self.assertEqual(result.network_status, "Connected")
+        self.assertTrue(result.is_network_connected)
+
+    def test_disconnected_network_sets_boolean_false(self) -> None:
+        """Verify Disconnected status sets is_network_connected to False."""
+        offline_raw = replace(self.raw, network_status="Disconnected")
+        result = analyze_metrics(offline_raw)
+        self.assertFalse(result.is_network_connected)
+        self.assertEqual(result.network_status, "Disconnected")
+
+    def test_invalid_network_status_raises_analyzer_error(self) -> None:
+        """Verify an unknown network status string raises AnalyzerError."""
+        with self.assertRaisesRegex(AnalyzerError, "Invalid network_status"):
+            evaluate_network_status("HalfConnected")
+
+    def test_negative_network_bytes_raises_analyzer_error(self) -> None:
+        """Verify negative byte counts raise AnalyzerError."""
+        with self.assertRaisesRegex(AnalyzerError, "cannot be negative"):
+            bytes_to_megabytes(-1)
+
+    def test_bytes_to_megabytes_rounding(self) -> None:
+        """Verify byte counts convert to MiB rounded to 2 decimal places."""
+        self.assertEqual(bytes_to_megabytes(1572864), 1.5)
 
     def test_cpu_zero_delta_returns_zero_percent(self) -> None:
         """Verify identical CPU snapshots return 0.0% without ZeroDivisionError."""

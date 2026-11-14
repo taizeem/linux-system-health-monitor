@@ -7,15 +7,18 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from python.collector import (  # noqa: E402
+     VALID_NETWORK_STATUSES,
     CpuSample,
     RawSystemMetrics,
     collect_raw_metrics,
     run_system_checks,
 )
 
+BYTES_PER_MIB = 1024 * 1024
+
 
 class AnalyzerError(ValueError):
-    """Raised when raw metrics contain impossible capacities (e.g., zero total RAM or Disk)."""
+    """Raised when raw metrics contain invalid capacities, process counts, or network data."""
 
 
 @dataclass(frozen=True)
@@ -39,7 +42,10 @@ class SystemMetrics:
     running_processes: int
     net_rx_bytes: int
     net_tx_bytes: int
+    net_rx_mb: float
+    net_tx_mb: float
     network_status: str
+    is_network_connected: bool
 
 
 def _clamp_percentage(value: float) -> float:
@@ -95,12 +101,35 @@ def calculate_disk_usage_percent(disk_total_kb: int, disk_used_kb: int) -> float
     return _clamp_percentage(usage)
 
 
+def validate_process_count(running_processes: int) -> int:
+    """Validate that the running process count is a positive integer."""
+    if running_processes <= 0:
+        raise AnalyzerError(
+            f"running_processes must be greater than 0, got {running_processes}"
+        )
+    return running_processes
+
+
+def bytes_to_megabytes(byte_count: int) -> float:
+    """Convert a non-negative byte counter into MiB rounded to 2 decimal places."""
+    if byte_count < 0:
+        raise AnalyzerError(f"Network byte counter cannot be negative, got {byte_count}")
+    return round(byte_count / BYTES_PER_MIB, 2)
+
+
+def evaluate_network_status(network_status: str) -> bool:
+    """Validate network_status string and return True if Connected, False if Disconnected."""
+    if network_status not in VALID_NETWORK_STATUSES:
+        raise AnalyzerError(f"Invalid network_status: {network_status!r}")
+    return network_status == "Connected"
+
+
 def analyze_metrics(raw: RawSystemMetrics) -> SystemMetrics:
     """Convert a RawSystemMetrics reading into a processed SystemMetrics snapshot."""
-    if raw.running_processes <= 0:
-        raise AnalyzerError(
-            f"running_processes must be greater than 0, got {raw.running_processes}"
-        )
+    validated_procs = validate_process_count(raw.running_processes)
+    is_connected = evaluate_network_status(raw.network_status)
+    rx_mb = bytes_to_megabytes(raw.net_rx_bytes)
+    tx_mb = bytes_to_megabytes(raw.net_tx_bytes)
 
     cpu_pct = calculate_cpu_usage_percent(raw.cpu_sample_1, raw.cpu_sample_2)
     ram_pct = calculate_ram_usage_percent(raw.mem_total_kb, raw.mem_available_kb)
@@ -125,10 +154,13 @@ def analyze_metrics(raw: RawSystemMetrics) -> SystemMetrics:
         disk_total_kb=raw.disk_total_kb,
         disk_used_kb=raw.disk_used_kb,
         disk_available_kb=raw.disk_available_kb,
-        running_processes=raw.running_processes,
+        running_processes=validated_procs,
         net_rx_bytes=raw.net_rx_bytes,
         net_tx_bytes=raw.net_tx_bytes,
+        net_rx_mb=rx_mb,
+        net_tx_mb=tx_mb,
         network_status=raw.network_status,
+        is_network_connected=is_connected,
     )
 
 
@@ -142,4 +174,7 @@ if __name__ == "__main__":
     print(f"Swap Usage:        {analyzed.swap_usage_percent:.1f}%")
     print(f"Disk Usage ({analyzed.disk_mount}):    {analyzed.disk_usage_percent:.1f}%")
     print(f"Running Processes: {analyzed.running_processes}")
-    print(f"Network:           {analyzed.network_status}")
+    print(
+        f"Network:           {analyzed.network_status} "
+        f"(RX: {analyzed.net_rx_mb:.2f} MiB, TX: {analyzed.net_tx_mb:.2f} MiB)"
+    )
