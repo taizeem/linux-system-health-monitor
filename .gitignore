@@ -8,9 +8,11 @@ __pycache__/
 venv/
 env/
 
-# Runtime logs and SQLite databases
+# Runtime logs and SQLite databases (including WAL and SHM files)
 logs/*.log
 data/*.db
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite3
 
 # Temporary and OS-specific files
