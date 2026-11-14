@@ -1,0 +1,8 @@
+# ==============================================================================
+# Linux System Health Monitor - Python Dependencies
+# ==============================================================================
+# Zero external third-party packages are required.
+# This project uses only the Python 3 Standard Library:
+#   - argparse, contextlib, dataclasses, io, json, logging, os, pathlib, re,
+#     sqlite3, stat, subprocess, sys, tempfile, time, typing, unittest
+# ==============================================================================

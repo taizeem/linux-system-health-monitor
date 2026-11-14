@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import sys
 from typing import Any, Iterator, Optional
 
@@ -120,13 +121,19 @@ def _connect_db(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def init_database(db_path: Optional[Path] = None) -> Path:
-    """Initialize the metric_history table, index, and WAL mode."""
+    """Initialize the metric_history table, index, WAL mode, and 0600 file permissions."""
     target_path = db_path or get_default_db_path()
     with _connect_db(target_path) as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute(CREATE_TABLE_SQL)
         conn.execute(CREATE_INDEX_SQL)
+
+    try:
+        target_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except OSError as exc:
+        raise DatabaseError(f"Failed to set 0600 permissions on {target_path}: {exc}") from exc
+
     return target_path
 
 
