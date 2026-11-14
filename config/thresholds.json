@@ -1,0 +1,8 @@
+{
+  "cpu_percent": 80.0,
+  "ram_percent": 70.0,
+  "swap_percent": 50.0,
+  "disk_percent": 85.0,
+  "max_processes": 500,
+  "require_network": true
+}

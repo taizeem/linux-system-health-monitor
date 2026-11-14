@@ -1,18 +1,20 @@
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from python.collector import (  # noqa: E402
-     VALID_NETWORK_STATUSES,
+    VALID_NETWORK_STATUSES,
     CpuSample,
     RawSystemMetrics,
     collect_raw_metrics,
     run_system_checks,
 )
+from python.config import ThresholdConfig, load_threshold_config  # noqa: E402
 
 BYTES_PER_MIB = 1024 * 1024
 
@@ -46,6 +48,17 @@ class SystemMetrics:
     net_tx_mb: float
     network_status: str
     is_network_connected: bool
+
+
+@dataclass(frozen=True)
+class HealthEvaluation:
+    """Result of comparing a SystemMetrics snapshot against ThresholdConfig limits."""
+
+    metrics: SystemMetrics
+    thresholds: ThresholdConfig
+    warnings: tuple[str, ...]
+    is_healthy: bool
+    status_message: str
 
 
 def _clamp_percentage(value: float) -> float:
@@ -164,17 +177,58 @@ def analyze_metrics(raw: RawSystemMetrics) -> SystemMetrics:
     )
 
 
+def evaluate_thresholds(
+    metrics: SystemMetrics,
+    thresholds: Optional[ThresholdConfig] = None,
+) -> HealthEvaluation:
+    """Compare SystemMetrics against ThresholdConfig and generate warning messages."""
+    active_thresholds = thresholds or ThresholdConfig()
+    warnings: list[str] = []
+
+    if metrics.cpu_usage_percent > active_thresholds.cpu_percent:
+        warnings.append(f"CPU usage is above {active_thresholds.cpu_percent:g}%")
+
+    if metrics.ram_usage_percent > active_thresholds.ram_percent:
+        warnings.append(f"RAM usage is above {active_thresholds.ram_percent:g}%")
+
+    if metrics.swap_usage_percent > active_thresholds.swap_percent:
+        warnings.append(f"Swap usage is above {active_thresholds.swap_percent:g}%")
+
+    if metrics.disk_usage_percent > active_thresholds.disk_percent:
+        warnings.append(f"Disk usage is above {active_thresholds.disk_percent:g}%")
+
+    if metrics.running_processes > active_thresholds.max_processes:
+        warnings.append(
+            f"Running processes count is above {active_thresholds.max_processes}"
+        )
+
+    if active_thresholds.require_network and not metrics.is_network_connected:
+        warnings.append("Network is disconnected")
+
+    is_healthy = len(warnings) == 0
+    return HealthEvaluation(
+        metrics=metrics,
+        thresholds=active_thresholds,
+        warnings=tuple(warnings),
+        is_healthy=is_healthy,
+        status_message="System is operational",
+    )
+
+
 if __name__ == "__main__":
     run_system_checks()
+    cfg = load_threshold_config()
     raw_metrics = collect_raw_metrics()
     analyzed = analyze_metrics(raw_metrics)
+    evaluation = evaluate_thresholds(analyzed, cfg)
+
     print(f"========== ANALYZED METRICS ({analyzed.timestamp_utc}) ==========")
     print(f"CPU Usage:         {analyzed.cpu_usage_percent:.1f}%")
     print(f"RAM Usage:         {analyzed.ram_usage_percent:.1f}%")
     print(f"Swap Usage:        {analyzed.swap_usage_percent:.1f}%")
     print(f"Disk Usage ({analyzed.disk_mount}):    {analyzed.disk_usage_percent:.1f}%")
     print(f"Running Processes: {analyzed.running_processes}")
-    print(
-        f"Network:           {analyzed.network_status} "
-        f"(RX: {analyzed.net_rx_mb:.2f} MiB, TX: {analyzed.net_tx_mb:.2f} MiB)"
-    )
+    print(f"Network:           {analyzed.network_status}")
+    for warn in evaluation.warnings:
+        print(f"[WARNING] {warn}")
+    print(f"[STATUS] {evaluation.status_message}")
